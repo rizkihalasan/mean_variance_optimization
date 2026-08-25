@@ -33,7 +33,7 @@ class StockDataCollector:
             'DIS', 'BABA', 'V', 'JPM', 'JNJ', 'WMT', 'PG', 'MA', 'UNH', 'HD',
             'BAC', 'ADBE', 'CRM', 'PYPL', 'INTC', 'VZ', 'KO', 'PEP', 'T',
             'CSCO', 'XOM', 'ABT', 'TMO', 'ACN', 'TXN', 'QCOM', 'COST', 'SBUX',
-            'MDT', 'LOW', 'HON', 'UPS', 'IBM', 'GS', 'CAT', 'MMM', 'SLB', 'QQQ',
+            'MDT', 'LOW', 'HON', 'UPS', 'IBM', 'GS', 'CAT', 'MMM', 'SLB', 'SPY',
             'LLY', 'JPM', 'ASML', 'HD', 'MU', 'CVX', 'NVS', 'PM', 'NVO', 'SHEL',
             'KLAC', 'TXN', 'PFE' ,'SPOT', 'BX', 'HOOD', 'GM', 'SE', 'TLT', 'SMH'
         ]
