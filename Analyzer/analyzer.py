@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy import optimize
 from typing import Any
+from dateutil.relativedelta import relativedelta
 from pypfopt.efficient_frontier import EfficientFrontier
 from pypfopt import risk_models
 from pypfopt import expected_returns
@@ -116,7 +117,7 @@ class Analyzer:
         df_portman['sharpe_ratio'] = (df_portman['return_point'] - min_return) / df_portman['risk_point']
         return df_portman
 
-    def calc_weights_pypfopt_max_weight(self, df_pypfopt, max_weight=0.2) -> np.ndarray:
+    def calc_weights_pypfopt_max_weight(self, df_pypfopt, max_weight=0.2, risk_free_rate=0.05, verbose=True, return_performance=False) -> np.ndarray:
         if 'Date' in df_pypfopt.columns:
             df_pypfopt.set_index('Date', inplace=True)
         mu = expected_returns.mean_historical_return(df_pypfopt)
@@ -125,8 +126,76 @@ class Analyzer:
         # Optimize for maximal Sharpe ratio
         ef = EfficientFrontier(mu, S)
         ef.add_constraint(lambda x : x <= max_weight) # for now only 1 constraint
-        # ef.min_volatility()
-        weights = ef.max_sharpe(risk_free_rate=0.05)
-        ef.portfolio_performance(risk_free_rate=0.05, verbose=True)
+
+        weights = ef.max_sharpe(risk_free_rate=risk_free_rate)
+        performance = ef.portfolio_performance(risk_free_rate=risk_free_rate, verbose=verbose)
+
+        if return_performance:
+            return weights, performance # performance = (expected return, volatility, sharpe)
 
         return weights
+
+    def prepare_price_panel(self, df_prices, date_column='Date') -> pd.DataFrame:
+        px = df_prices.copy()
+        px[date_column] = pd.to_datetime(px[date_column].astype(str).str[0:10])
+        return px.set_index(date_column).dropna(how='any')
+
+    def walk_forward(self, df_prices, first_rebalance, train_years=1, freq='QS', max_weight=0.2, 
+                     risk_free_rate=0.05, cost_bps=20, benchmark='SPY') -> dict:
+        """Re-fit max-Sharpe weights on the trailing train_years of prices at every balance date,
+        hold them until the next one, and chain the holding periods into one out-of-sample daily return series."""
+        rebalance_dates = pd.date_range(first_rebalance, df_prices.index[-1], freq=freq)
+        gross, costs, equal_weight, in_sample_sharpe, weights_log = [], [], [], [], {}
+        held = pd.Series(0.0, index=df_prices.columns)
+
+        for i, start in enumerate(rebalance_dates):
+            if i+1 < len(rebalance_dates):
+                end = rebalance_dates[i+1]
+            else:
+                end = df_prices.index[-1]
+
+            train = df_prices[(df_prices.index >= start - relativedelta(years=train_years))
+                               & (df_prices.index < start)]
+            hold = df_prices[(df_prices.index >= start) & (df_prices.index <= end)]
+            if len(hold) < 2:
+                continue
+
+            weights, performance = self.calc_weights_pypfopt_max_weight(
+                train, max_weight, risk_free_rate, verbose=False, return_performance=True
+            )
+            target = pd.Series(weights).reindex(df_prices.columns).fillna(0.0)
+            in_sample_sharpe.append(performance[2])
+            weights_log[str(start.date())] = target[target > 1e-6].sort_values(ascending=False)
+
+            growth = hold / hold.iloc[0]
+            period_return = growth.mul(target).sum(axis=1).pct_change().dropna()
+            cost = pd.Series(0.0, index=period_return.index)
+            cost.iloc[0] = (target - held).abs().sum() * cost_bps / 10000
+            gross.append(period_return)
+            costs.append(cost)
+            equal_weight.append(growth.mean(axis=1).pct_change().dropna())
+
+            end_value = target * growth.iloc[-1]
+            held = end_value / end_value.sum()
+
+        gross = pd.concat(gross)
+        return {
+            'mvo_gross': gross,
+            'mvo_net': gross - pd.concat(costs),
+            'benchmark': df_prices[benchmark].pct_change().loc[gross.index],
+            'equal_weight': pd.concat(equal_weight),
+            'in_sample_sharpe': in_sample_sharpe,
+            'weights': weights_log
+        }
+
+    def performance_summary(self, daily_returns, risk_free_rate=0.05, periods_per_year=252) -> dict:
+        equity = (1+daily_returns).cumprod()
+        years = len(daily_returns) / periods_per_year
+        excess = daily_returns - risk_free_rate / periods_per_year
+        return {
+            'cagr': equity.iloc[-1] ** (1/years) - 1,
+            'volatility': daily_returns.std() * np.sqrt(periods_per_year),
+            'sharpe_ratio': excess.mean() / daily_returns.std() * np.sqrt(periods_per_year),
+            'max_drawdown': (equity / equity.cummax() - 1).min(),
+            'growth_of_1': equity.iloc[-1]
+        }

@@ -6,33 +6,6 @@ from functools import reduce
 from datetime import date
 from dateutil.relativedelta import relativedelta
 
-class CombinedYahooFinanceData(bt.feeds.GenericCSVData):
-    lines = ('fear_greed_index',)
-    params = (
-        ('dtformat', '%Y-%m-%d'),
-        ('datetime', 0),
-        ('open', 1),
-        ('high', 2),
-        ('low', 3),
-        ('close', 4),
-        ('volume', 5),
-        ('fear_greed_index', 6),
-        ('openinterest', -1),
-    )
-
-class FearGreed(bt.Strategy):
-    def __init__(self):
-        self.fear_greed_index = self.datas[0].fear_greed_index
-        print('init fear_greed')
-        print(self.fear_greed_index)
-        
-    def next(self):
-        if not self.position:
-            if self.fear_greed_index <= 34:
-                self.buy()
-        elif self.fear_greed_index >= 60 :
-            self.close()
-
 class ManualBacktest():
     def __init__(self):
         self.df_port = None
@@ -70,11 +43,9 @@ class ManualBacktest():
         return df_port
     
     def calculate_return_1n(self, allocation, df):
-        weight = 1/len(allocation)
         n = len(df)
-        start_total_money = sum(df[asset][0] * weight for asset in allocation)
-        end_total_money = sum(df[asset][n-1] * weight for asset in allocation)
-        return ((end_total_money/start_total_money) - 1) * 100
+        growth = [df[asset][n-1] / df[asset][0] for asset in allocation]
+        return (np.mean(growth) - 1)*100
 
     def calculate_return(self):
         if self.df_port:
@@ -128,9 +99,10 @@ class ManualBacktest():
 
     def calculate_std_benchmark(self, start_date, end_date, benchmark='SPY', date_column='Date', return_column='Close'):
         df = pd.read_csv('../csv_data/stocks/'+benchmark+'.csv')
+        df[date_column] = df[date_column].astype(str).str[0:10]
         df_port = df[(df[date_column] >= start_date) & (df[date_column] <= end_date)].reset_index(drop=True)
     
-        df_port['pct_daily_return'] = df[return_column].pct_change()*100
+        df_port['pct_daily_return'] = df_port[return_column].pct_change()*100
         n = len(df_port)
         return np.std(df_port['pct_daily_return']) * np.sqrt(n)
 
@@ -188,7 +160,7 @@ class ManualBacktest():
 
         self.df_port = df_port
         self.high_water_mark = high_water_mark[-1]
-        self.drawdown = drawdown[-1]
+        self.drawdown = min(drawdown)
         return df_port
 
     def calculate_underperformed_stocks(self, allocation, df, column='_money'):
@@ -198,9 +170,3 @@ class ManualBacktest():
             asset_delta_column = df[k+column][n-1] - df[k+column][0]
             return_per_asset[k] = float(asset_delta_column)
         return dict(sorted(return_per_asset.items(), key=lambda item: item[1]))
-
-data = CombinedYahooFinanceData(dataname='TSLA_fear_greed.csv',
-                                 fromdate=datetime(2025, 1, 6),
-                                 todate=datetime(2025, 12, 6),
-                                 reverse=False,
-                                 header = True)
